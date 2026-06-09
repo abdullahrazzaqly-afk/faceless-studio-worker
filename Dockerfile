@@ -1,64 +1,19 @@
-# RunPod Serverless worker for Faceless Studio — ComfyUI + LTX-Video 2.3.
+# Use RunPod's official serverless ComfyUI worker as the base. They handle
+# the serverless wrapping, handler.py, RunPod SDK, Python deps, CUDA, ComfyUI
+# boot — all the infrastructure we kept getting wrong.
 #
-# Build size is roughly 28 GB once LTX weights are baked in. RunPod's GitHub
-# build pipeline handles this on their infrastructure so you don't pay for it.
-# Cold start ~30-45 seconds; subsequent runs on the same worker are ~5 seconds.
-#
-# Substitution placeholders in the LTX workflow JSON (filled by server.js):
-#   {{PROMPT}}, {{KEYFRAME_B64}}, {{FRAMES}}, {{WIDTH}}, {{HEIGHT}}, {{SEED}}
+# All we add on top: the Lightricks LTX-Video custom nodes. Weights are pulled
+# at runtime from a mounted Network Volume (no Dockerfile bloat).
+FROM runpod/worker-comfyui:5.5.0-base
 
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+# Install the official LTX-Video custom nodes from Lightricks.
+RUN cd /comfyui/custom_nodes \
+    && git clone --depth 1 https://github.com/Lightricks/ComfyUI-LTXVideo.git \
+    && pip install --no-cache-dir -r ComfyUI-LTXVideo/requirements.txt
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    HF_HUB_ENABLE_HF_TRANSFER=1
+# Allow the running worker to discover models under the mounted Network Volume.
+# `extra_model_paths.yaml` is ComfyUI's standard way to register extra dirs.
+RUN printf 'ltx-video:\n  base_path: /runpod-volume\n  checkpoints: LTX-Video/\n' \
+    > /comfyui/extra_model_paths.yaml
 
-# System deps. ffmpeg/libsndfile for ComfyUI's video nodes; git for ComfyUI install.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-pip python3-venv \
-        git wget ffmpeg libsndfile1 libgl1 libglib2.0-0 \
-        ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN ln -sf /usr/bin/python3 /usr/bin/python && python -m pip install --upgrade pip
-
-WORKDIR /opt
-
-# --- ComfyUI ---------------------------------------------------------------
-RUN git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git /opt/ComfyUI
-WORKDIR /opt/ComfyUI
-RUN pip install -r requirements.txt
-
-# Torch + CUDA 12.1 wheels (ComfyUI requirements installs a CPU torch otherwise)
-RUN pip install --extra-index-url https://download.pytorch.org/whl/cu121 \
-        torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0
-
-# --- LTX-Video custom nodes ------------------------------------------------
-WORKDIR /opt/ComfyUI/custom_nodes
-RUN git clone --depth 1 https://github.com/Lightricks/ComfyUI-LTXVideo.git \
-    && pip install -r ComfyUI-LTXVideo/requirements.txt || true
-
-# --- huggingface_hub for runtime LTX download -----------------------------
-# We do NOT bake the LTX weights into the image — they're ~22 GB and blow past
-# RunPod's build-time disk/timeout limits. start.sh downloads them on first
-# cold start. If a Network Volume is mounted at /runpod-volume, weights persist
-# across worker spawns. Otherwise each new worker downloads (~2-4 min).
-RUN pip install --no-cache-dir huggingface_hub hf_transfer
-
-# --- RunPod worker ---------------------------------------------------------
-WORKDIR /workspace
-COPY requirements.txt /workspace/requirements.txt
-RUN pip install -r /workspace/requirements.txt
-
-COPY handler.py /workspace/handler.py
-COPY start.sh /workspace/start.sh
-# Normalize line endings — Windows-authored shell scripts can ship with CRLF
-# which makes Linux exec the shebang as "#!/bin/bash\r" and die silently.
-RUN sed -i 's/\r$//' /workspace/start.sh /workspace/handler.py && chmod +x /workspace/start.sh
-
-EXPOSE 8188
-
-# Plain bash exec — no login mode, no inline commands. start.sh prints the boot
-# heartbeat as its first line so the log proof of life still works.
-CMD ["bash", "/workspace/start.sh"]
+# Nothing else — the base image's CMD already runs ComfyUI + RunPod handler.
