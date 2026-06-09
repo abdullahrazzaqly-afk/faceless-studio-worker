@@ -39,18 +39,17 @@ WORKDIR /opt/ComfyUI/custom_nodes
 RUN git clone --depth 1 https://github.com/Lightricks/ComfyUI-LTXVideo.git \
     && pip install -r ComfyUI-LTXVideo/requirements.txt || true
 
-# --- LTX-2.3 weights -------------------------------------------------------
-# Pulls the 22B image-to-video checkpoint from the official Lightricks HF repo.
-# Replace this URL when Lightricks ships a newer point release.
+# --- LTX-Video weights -----------------------------------------------------
+# Pulls everything safetensors-shaped from the official Lightricks HF repo.
+# Using snapshot_download (not hf_hub_download) so we don't depend on a single
+# exact filename — Lightricks ships different files per LTX point release and
+# the ComfyUI-LTXVideo custom nodes auto-discover whatever's in the dir.
 RUN pip install --no-cache-dir huggingface_hub hf_transfer
-RUN python -c "from huggingface_hub import hf_hub_download; \
-    hf_hub_download(repo_id='Lightricks/LTX-Video', filename='ltxv-2.3-22b-i2v.safetensors', \
-                    local_dir='/opt/ComfyUI/models/checkpoints', local_dir_use_symlinks=False)"
-
-# Text encoder (T5) — required by LTX nodes for prompt conditioning.
 RUN python -c "from huggingface_hub import snapshot_download; \
-    snapshot_download(repo_id='google/flan-t5-xxl', local_dir='/opt/ComfyUI/models/text_encoders/t5xxl', \
-                      local_dir_use_symlinks=False, allow_patterns=['*.json','*.safetensors','*.model','*.txt'])"
+    snapshot_download(repo_id='Lightricks/LTX-Video', \
+                      local_dir='/opt/ComfyUI/models/checkpoints/LTX-Video', \
+                      local_dir_use_symlinks=False, \
+                      allow_patterns=['*.safetensors', '*.json', '*.yaml', '*.txt', 'tokenizer/*'])"
 
 # --- RunPod worker ---------------------------------------------------------
 WORKDIR /workspace
