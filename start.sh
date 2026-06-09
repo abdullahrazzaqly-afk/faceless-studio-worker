@@ -2,6 +2,13 @@
 # Download LTX-Video weights on cold start (if not already cached),
 # boot ComfyUI in the background, then hand control to the RunPod handler.
 
+# Proof-of-life heartbeat as the very first line. If RunPod logs ever show
+# "exit code 1" again with NOTHING before this line, the bug is in the image
+# itself (line endings, missing bash, broken layer) — not in this script.
+echo "==> CONTAINER BOOTED at $(date) — UID=$(id -u) — pwd=$(pwd)"
+echo "==> bash version: $BASH_VERSION"
+echo "==> Python: $(python --version 2>&1 || echo 'python not found')"
+
 set -e
 
 # If RunPod mounted a Network Volume at /runpod-volume, persist weights there

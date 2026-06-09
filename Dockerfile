@@ -59,6 +59,6 @@ RUN sed -i 's/\r$//' /workspace/start.sh /workspace/handler.py && chmod +x /work
 
 EXPOSE 8188
 
-# Wrap in bash explicitly + echo at first line so even if start.sh dies,
-# we get one log line proving the container actually booted.
-CMD ["bash", "-lc", "echo '==> CONTAINER BOOTED at '$(date) ; exec bash /workspace/start.sh"]
+# Plain bash exec — no login mode, no inline commands. start.sh prints the boot
+# heartbeat as its first line so the log proof of life still works.
+CMD ["bash", "/workspace/start.sh"]
