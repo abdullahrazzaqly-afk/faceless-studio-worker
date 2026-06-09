@@ -10,13 +10,20 @@
 # Tag list: https://hub.docker.com/r/runpod/worker-comfyui/tags
 FROM runpod/worker-comfyui:5.8.5-base
 
-# Install the official LTX-Video custom nodes from Lightricks.
+# Install the official LTX-Video custom nodes from Lightricks (for advanced
+# samplers; the base I2V workflow uses ComfyUI core nodes only).
 RUN cd /comfyui/custom_nodes \
     && git clone --depth 1 https://github.com/Lightricks/ComfyUI-LTXVideo.git \
     && pip install --no-cache-dir -r ComfyUI-LTXVideo/requirements.txt
 
-# Allow the running worker to discover models under the mounted Network Volume.
-# `extra_model_paths.yaml` is ComfyUI's standard way to register extra dirs.
+# Bake the LTX-Video 0.9.5 2B checkpoint into the image (~4.5 GB).
+# LTX-2 19B was ~22 GB and blew past RunPod's build limits, so we use the
+# smaller 2B model which fits comfortably in 24 GB VRAM and the build budget.
+RUN pip install --no-cache-dir huggingface_hub hf_transfer
+RUN python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='Lightricks/LTX-Video', filename='ltx-video-2b-v0.9.5.safetensors', local_dir='/comfyui/models/checkpoints', local_dir_use_symlinks=False)"
+
+# Also register /runpod-volume as a secondary checkpoint path so larger models
+# (e.g. LTX-2 19B if you later upgrade to a 48GB GPU) can live on the volume.
 RUN printf 'ltx-video:\n  base_path: /runpod-volume\n  checkpoints: LTX-Video/\n' \
     > /comfyui/extra_model_paths.yaml
 
