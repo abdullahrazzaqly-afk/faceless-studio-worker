@@ -23,13 +23,22 @@ import runpod
 COMFY_HOST = os.environ.get("COMFY_HOST", "127.0.0.1:8188")
 COMFY_OUTPUT_DIR = os.environ.get("COMFY_OUTPUT_DIR", "/opt/ComfyUI/output")
 POLL_INTERVAL_SEC = 1.0
-MAX_WAIT_SEC = 300  # 5 minutes hard cap
+MAX_WAIT_SEC = 600  # 10 minutes for the actual workflow run
+# Allow up to 15 minutes for ComfyUI to come up — the background subshell in
+# start.sh downloads 22 GB of LTX weights before ComfyUI boots, and that can
+# take a while on cold start when there's no Network Volume cache.
+COMFY_READY_TIMEOUT_SEC = 900
 
 
-def comfy_ready(timeout=120):
-    """Block until ComfyUI's HTTP server is accepting connections."""
+def comfy_ready(timeout=COMFY_READY_TIMEOUT_SEC):
+    """Block until ComfyUI's HTTP server is accepting connections.
+
+    First cold start (no Network Volume) blocks here while start.sh's
+    background subshell downloads ~22 GB of LTX weights before booting
+    ComfyUI. Allow plenty of slack."""
     start = time.time()
     url = f"http://{COMFY_HOST}/"
+    waited_log = 0
     while time.time() - start < timeout:
         try:
             with urllib.request.urlopen(url, timeout=2) as r:
@@ -37,8 +46,12 @@ def comfy_ready(timeout=120):
                     return True
         except Exception:
             pass
-        time.sleep(1)
-    raise RuntimeError("ComfyUI did not become ready in time.")
+        time.sleep(2)
+        elapsed = int(time.time() - start)
+        if elapsed >= waited_log + 30:
+            print(f"[handler] still waiting for ComfyUI ({elapsed}s)", flush=True)
+            waited_log = elapsed
+    raise RuntimeError(f"ComfyUI did not become ready within {timeout}s.")
 
 
 def queue_prompt(workflow, client_id):

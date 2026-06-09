@@ -1,6 +1,9 @@
 #!/bin/bash
-# Download LTX-Video weights on cold start (if not already cached),
-# boot ComfyUI in the background, then hand control to the RunPod handler.
+# Start the RunPod handler IMMEDIATELY so the worker registers healthy with
+# RunPod's rollout health check (which times out ~60-90 sec). Push the slow
+# work — LTX weights download + ComfyUI boot — into a background subshell.
+# The first /run request will block in handler.py's comfy_ready() poll until
+# ComfyUI is up; subsequent requests are fast.
 
 # Proof-of-life heartbeat as the very first line. If RunPod logs ever show
 # "exit code 1" again with NOTHING before this line, the bug is in the image
@@ -9,28 +12,26 @@ echo "==> CONTAINER BOOTED at $(date) — UID=$(id -u) — pwd=$(pwd)"
 echo "==> bash version: $BASH_VERSION"
 echo "==> Python: $(python --version 2>&1 || echo 'python not found')"
 
-set -e
+# --- Background: download LTX weights, then boot ComfyUI -------------------
+(
+    set -e
 
-# If RunPod mounted a Network Volume at /runpod-volume, persist weights there
-# so they survive worker scaledown. Otherwise fall back to local container
-# storage (downloads every cold start, which is suboptimal but works).
-if [ -d "/runpod-volume" ]; then
-    MODEL_ROOT="/runpod-volume"
-    echo "→ Using mounted Network Volume at /runpod-volume for model cache"
-else
-    MODEL_ROOT="/opt/ComfyUI/models/checkpoints"
-    echo "→ No Network Volume mounted — caching to container-local storage (will redownload on next cold start)"
-fi
+    if [ -d "/runpod-volume" ]; then
+        MODEL_ROOT="/runpod-volume"
+        echo "[bg] → Using mounted Network Volume at /runpod-volume for model cache"
+    else
+        MODEL_ROOT="/opt/ComfyUI/models/checkpoints"
+        echo "[bg] → No Network Volume mounted — caching to container-local storage"
+    fi
 
-LTX_DIR="$MODEL_ROOT/LTX-Video"
-mkdir -p "$LTX_DIR"
+    LTX_DIR="$MODEL_ROOT/LTX-Video"
+    mkdir -p "$LTX_DIR"
 
-# Skip download if weights are already there (any .safetensors file present).
-if compgen -G "$LTX_DIR/*.safetensors" > /dev/null; then
-    echo "→ LTX weights already present in $LTX_DIR, skipping download"
-else
-    echo "→ Downloading LTX-Video weights (~22 GB, one-time)..."
-    python -c "
+    if compgen -G "$LTX_DIR/*.safetensors" > /dev/null; then
+        echo "[bg] → LTX weights already present in $LTX_DIR, skipping download"
+    else
+        echo "[bg] → Downloading LTX-Video weights (~22 GB, one-time)..."
+        python -c "
 from huggingface_hub import snapshot_download
 snapshot_download(
     repo_id='Lightricks/LTX-Video',
@@ -39,20 +40,25 @@ snapshot_download(
     allow_patterns=['*.safetensors', '*.json', '*.yaml', '*.txt', 'tokenizer/*']
 )
 "
-fi
+        echo "[bg] → Download complete"
+    fi
 
-# Make sure ComfyUI sees the weights under its standard checkpoints/ path
-# even when downloaded to /runpod-volume.
-mkdir -p /opt/ComfyUI/models/checkpoints
-if [ ! -L /opt/ComfyUI/models/checkpoints/LTX-Video ]; then
-    ln -sfn "$LTX_DIR" /opt/ComfyUI/models/checkpoints/LTX-Video
-fi
+    # Symlink into ComfyUI's standard checkpoints dir.
+    mkdir -p /opt/ComfyUI/models/checkpoints
+    if [ ! -L /opt/ComfyUI/models/checkpoints/LTX-Video ]; then
+        ln -sfn "$LTX_DIR" /opt/ComfyUI/models/checkpoints/LTX-Video
+    fi
 
-echo "→ Starting ComfyUI on 127.0.0.1:8188 (logs at /tmp/comfyui.log)"
-cd /opt/ComfyUI
-python main.py --listen 127.0.0.1 --port 8188 --disable-metadata --disable-auto-launch \
-    > /tmp/comfyui.log 2>&1 &
+    echo "[bg] → Starting ComfyUI on 127.0.0.1:8188 (logs at /tmp/comfyui.log)"
+    cd /opt/ComfyUI
+    exec python main.py --listen 127.0.0.1 --port 8188 --disable-metadata --disable-auto-launch \
+        > /tmp/comfyui.log 2>&1
+) &
 
-echo "→ Starting RunPod handler"
+# --- Foreground: RunPod handler comes up immediately -----------------------
+# handler.py's comfy_ready() poll will block here until the background
+# subshell finishes the download + boots ComfyUI. Worker registers healthy
+# from second one because handler.py is alive.
+echo "==> Starting RunPod handler (background download + ComfyUI boot in progress)"
 cd /workspace
 exec python handler.py
