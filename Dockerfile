@@ -39,17 +39,12 @@ WORKDIR /opt/ComfyUI/custom_nodes
 RUN git clone --depth 1 https://github.com/Lightricks/ComfyUI-LTXVideo.git \
     && pip install -r ComfyUI-LTXVideo/requirements.txt || true
 
-# --- LTX-Video weights -----------------------------------------------------
-# Pulls everything safetensors-shaped from the official Lightricks HF repo.
-# Using snapshot_download (not hf_hub_download) so we don't depend on a single
-# exact filename — Lightricks ships different files per LTX point release and
-# the ComfyUI-LTXVideo custom nodes auto-discover whatever's in the dir.
+# --- huggingface_hub for runtime LTX download -----------------------------
+# We do NOT bake the LTX weights into the image — they're ~22 GB and blow past
+# RunPod's build-time disk/timeout limits. start.sh downloads them on first
+# cold start. If a Network Volume is mounted at /runpod-volume, weights persist
+# across worker spawns. Otherwise each new worker downloads (~2-4 min).
 RUN pip install --no-cache-dir huggingface_hub hf_transfer
-RUN python -c "from huggingface_hub import snapshot_download; \
-    snapshot_download(repo_id='Lightricks/LTX-Video', \
-                      local_dir='/opt/ComfyUI/models/checkpoints/LTX-Video', \
-                      local_dir_use_symlinks=False, \
-                      allow_patterns=['*.safetensors', '*.json', '*.yaml', '*.txt', 'tokenizer/*'])"
 
 # --- RunPod worker ---------------------------------------------------------
 WORKDIR /workspace
