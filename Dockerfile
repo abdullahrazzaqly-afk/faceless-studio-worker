@@ -4,7 +4,10 @@
 #
 # All we add on top: the Lightricks LTX-Video custom nodes. Weights are pulled
 # at runtime from a mounted Network Volume (no Dockerfile bloat).
-FROM runpod/worker-comfyui:5.5.0-base
+# Need ComfyUI >= 0.3.70 for the comfy.ldm.lightricks.av_model module that
+# ComfyUI-LTXVideo imports. The 5.5.0 base ships ComfyUI 0.3.64 which is too
+# old — `:latest` tracks the newest worker-comfyui build (newer ComfyUI).
+FROM runpod/worker-comfyui:latest
 
 # Install the official LTX-Video custom nodes from Lightricks.
 RUN cd /comfyui/custom_nodes \
