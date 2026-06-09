@@ -1,0 +1,5 @@
+# Force Unix LF line endings for shell scripts and the Dockerfile so they
+# survive Windows-side git commits without git mangling them into CRLF.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.py text eol=lf

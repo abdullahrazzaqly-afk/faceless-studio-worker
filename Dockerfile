@@ -53,8 +53,12 @@ RUN pip install -r /workspace/requirements.txt
 
 COPY handler.py /workspace/handler.py
 COPY start.sh /workspace/start.sh
-RUN chmod +x /workspace/start.sh
+# Normalize line endings — Windows-authored shell scripts can ship with CRLF
+# which makes Linux exec the shebang as "#!/bin/bash\r" and die silently.
+RUN sed -i 's/\r$//' /workspace/start.sh /workspace/handler.py && chmod +x /workspace/start.sh
 
 EXPOSE 8188
 
-CMD ["/workspace/start.sh"]
+# Wrap in bash explicitly + echo at first line so even if start.sh dies,
+# we get one log line proving the container actually booted.
+CMD ["bash", "-lc", "echo '==> CONTAINER BOOTED at '$(date) ; exec bash /workspace/start.sh"]
